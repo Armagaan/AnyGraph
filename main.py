@@ -7,9 +7,23 @@ from model import Expert, Feat_Projector, Adj_Projector, AnyGraph
 from data_handler import MultiDataHandler, DataHandler
 import numpy as np
 import pickle
+import random
 import os
 import setproctitle
 import time
+
+def set_seed(seed):
+    """Seed every RNG the training and evaluation paths draw from.
+
+    Without this, negative sampling, the per-step dataset downsampling, the
+    randomised SVD in the projectors, and graph-transformer anchor selection all
+    vary between otherwise identical runs.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    t.manual_seed(seed)
+    t.cuda.manual_seed_all(seed)
+
 
 class Exp:
     def __init__(self, multi_handler):
@@ -60,6 +74,7 @@ class Exp:
             end_time = time.time()
             print(f'NOTICE: {end_time-start_time}')
             if tst_flag:
+                group_ndcgs = []
                 for handler_group_id in range(len(self.multi_handler.tst_handlers_group)):
                     tst_handlers = self.multi_handler.tst_handlers_group[handler_group_id]
                     self.model.assign_experts(tst_handlers, reca=False, log_assignment=True)
@@ -72,12 +87,17 @@ class Exp:
                         tstnum += reses['tstNum']
                     reses = {'Recall': recall / tstnum, 'NDCG': ndcg / tstnum}
                     log(self.make_print('Test'+str(handler_group_id), ep, reses, tst_flag))
+                    group_ndcgs.append(reses['NDCG'])
 
-                    if reses['NDCG'] > best_ndcg:
-                        best_ndcg = reses['NDCG']
-                        best_ep = ep
+                # Select on the last test group: the zero-shot group under the
+                # 'A+B' setting, otherwise the only group.
+                if group_ndcgs[-1] > best_ndcg:
+                    best_ndcg, best_ep = group_ndcgs[-1], ep
+                    self.save_model(args.save_path + '_best')
                 self.save_history()
             print()
+        if best_ep >= 0:
+            log('Best epoch %d: NDCG = %.4f, saved as %s_best' % (best_ep, best_ndcg, args.save_path))
 
         for test_group_id in range(len(self.multi_handler.tst_handlers_group)):
             repeat_times = 5
@@ -242,17 +262,19 @@ class Exp:
             allNdcg += ndcg
         return allRecall, allNdcg
     
+    def save_model(self, save_path):
+        content = {
+            'model': self.model,
+        }
+        t.save(content, './Models/' + save_path + '.mod')
+        log('Model Saved: %s' % save_path)
+
     def save_history(self):
         if args.epoch == 0:
             return
         with open('./History/' + args.save_path + '.his', 'wb') as fs:
             pickle.dump(self.metrics, fs)
-
-        content = {
-            'model': self.model,
-        }
-        t.save(content, './Models/' + args.save_path + '.mod')
-        log('Model Saved: %s' % args.save_path)
+        self.save_model(args.save_path)
 
     def load_model(self):
         ckp = t.load('./Models/' + args.load_model + '.mod')
@@ -271,6 +293,7 @@ if __name__ == '__main__':
         raise Exception('Devices should be less than 2')
     else:
         args.devices = ['cuda:0', 'cuda:0']
+    set_seed(args.seed)
     logger.saveDefault = True
     setproctitle.setproctitle('AnyGraph')
 

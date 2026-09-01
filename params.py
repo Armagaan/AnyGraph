@@ -6,6 +6,7 @@ def parse_args():
     parser.add_argument('--batch', default=4096, type=int, help='training batch size')
     parser.add_argument('--tst_batch', default=256, type=int, help='testing batch size (number of users)')
     parser.add_argument('--epoch', default=100, type=int, help='number of epochs')
+    parser.add_argument('--seed', default=0, type=int, help='random seed for python, numpy and torch')
     parser.add_argument('--save_path', default='tem', help='file name to save model and training record')
     parser.add_argument('--load_model', default=None, help='model name to load')
     parser.add_argument('--tst_epoch', default=1, type=int, help='number of epoch to test while training')
