@@ -7,7 +7,7 @@ from Utils.TimeLogger import log
 import torch as t
 import torch.utils.data as data
 import torch_geometric.transforms as T
-from model import Feat_Projector, Adj_Projector, TopoEncoder
+from model import Feat_Projector, Adj_Projector, TopoEncoder, is_oom
 import os
 
 class MultiDataHandler:
@@ -210,8 +210,10 @@ class DataHandler:
 
             try:
                 self.projectors = self.topo_encoder(self.trn_input_adj.to(args.devices[0]), feats.to(args.devices[0])).detach().cpu()
-            except Exception:
-                print(f'{self.data_name} memory overflow')
+            except Exception as err:
+                if not is_oom(err):
+                    raise
+                log(f'{self.data_name}: out of memory, falling back to chunked propagation')
                 mean, std = feats.mean(dim=-1, keepdim=True), feats.std(dim=-1, keepdim=True)
                 tem_adj = self.trn_input_adj.to(args.devices[0])
                 mem_cache = 256
