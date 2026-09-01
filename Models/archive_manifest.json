@@ -1,0 +1,55 @@
+{
+  "archive_version": 1,
+  "checkpoints": [
+    {
+      "source_file": "pretrain_link1.mod",
+      "source_sha256": "2cd746929ec982da0cf1cd0887eb78eaff7c271127a54af6096dd7b45adcc0b5",
+      "source_bytes": 7568754075,
+      "archive_file": "pretrain_link1.state.pt",
+      "archive_bytes": 67588262,
+      "tensor_count": 256,
+      "param_count": 16875520,
+      "config": {
+        "nn": "mlp",
+        "fc_layer": 8,
+        "latdim": 512,
+        "expert_num": 8,
+        "trn_count": [
+          174984049,
+          128499488,
+          188621544,
+          129148712,
+          124177060,
+          129108673,
+          126487410,
+          206504866
+        ]
+      }
+    },
+    {
+      "source_file": "pretrain_link2.mod",
+      "source_sha256": "43b9232f04c31d0d1a2de9a73153984ea0ff36ebbffa5e3cc643effb5fd6069e",
+      "source_bytes": 3004450199,
+      "archive_file": "pretrain_link2.state.pt",
+      "archive_bytes": 67588262,
+      "tensor_count": 256,
+      "param_count": 16875520,
+      "config": {
+        "nn": "mlp",
+        "fc_layer": 8,
+        "latdim": 512,
+        "expert_num": 8,
+        "trn_count": [
+          312699590,
+          287459808,
+          308323803,
+          285980689,
+          282468895,
+          419541754,
+          285126964,
+          314296611
+        ]
+      }
+    }
+  ]
+}
