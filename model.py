@@ -10,6 +10,13 @@ from time import time
 init = nn.init.xavier_uniform_
 uniformInit = nn.init.uniform_
 
+def is_oom(err):
+    """True for a CUDA out-of-memory error, false for every other failure."""
+    if isinstance(err, t.cuda.OutOfMemoryError):
+        return True
+    return isinstance(err, RuntimeError) and 'out of memory' in str(err).lower()
+
+
 class FeedForwardLayer(nn.Module):
     def __init__(self, in_feat, out_feat, bias=True, act=None):
         super(FeedForwardLayer, self).__init__()
@@ -226,7 +233,10 @@ class Expert(nn.Module):
         if rerun_embed:
             try:
                 final_embeds = self.forward(projectors)
-            except Exception:
+            except Exception as err:
+                if not is_oom(err):
+                    raise
+                log('pred_for_test: out of memory, falling back to chunked embedding')
                 final_embeds_list = []
                 div = args.batch * 3
                 temlen = projectors.shape[0] // div
@@ -250,13 +260,12 @@ class Expert(nn.Module):
 
     def attempt(self, topo_embeds, dataset):
         final_embeds = self.trainable_nn(topo_embeds)
-        rows, cols, negs = list(map(lambda x: t.from_numpy(x).long().to(args.devices[1]), [dataset.ancs, dataset.poss, dataset.negs]))
-        if rows.shape[0] > args.attempt_cache:
-            random_perm = t.randperm(rows.shape[0], device=args.devices[0])
-            pck_perm = random_perm[:args.attempt_cache]
-            rows = rows[pck_perm]
-            cols = cols[pck_perm]
-            negs = negs[pck_perm]
+        all_rows, all_cols, all_negs = list(map(lambda x: t.from_numpy(x).long().to(args.devices[1]), [dataset.ancs, dataset.poss, dataset.negs]))
+        cache_size = args.attempt_cache
+        rows, cols, negs = all_rows, all_cols, all_negs
+        if all_rows.shape[0] > cache_size:
+            pck_perm = t.randperm(all_rows.shape[0], device=args.devices[0])[:cache_size]
+            rows, cols, negs = all_rows[pck_perm], all_cols[pck_perm], all_negs[pck_perm]
         while True:
             try:
                 row_embeds = final_embeds[rows]
@@ -264,13 +273,15 @@ class Expert(nn.Module):
                 neg_embeds = final_embeds[negs]
                 score = ((row_embeds * col_embeds).sum(-1) - (row_embeds * neg_embeds).sum(-1)).sigmoid().mean().item()
                 break
-            except Exception:
-                args.attempt_cache = args.attempt_cache // 2
-                random_perm = t.randperm(rows.shape[0], device=args.devices[0])
-                pck_perm = random_perm[:args.attempt_cache]
-                rows = rows[pck_perm]
-                cols = cols[pck_perm]
-                negs = negs[pck_perm]
+            except Exception as err:
+                if not is_oom(err):
+                    raise
+                if cache_size <= 1:
+                    raise RuntimeError('attempt(): out of memory even at a single sample')
+                cache_size = cache_size // 2
+                log('attempt: out of memory, retrying with %d samples' % cache_size)
+                pck_perm = t.randperm(all_rows.shape[0], device=args.devices[0])[:cache_size]
+                rows, cols, negs = all_rows[pck_perm], all_cols[pck_perm], all_negs[pck_perm]
         t.cuda.empty_cache()
         return score
 
@@ -284,11 +295,8 @@ class AnyGraph(nn.Module):
         if args.expert_num == 1:
             self.assignment = [0] * len(handlers)
             return
-        try:
-            expert_scores = np.array(list(map(lambda expert: expert.trn_count, self.experts)))
-            expert_scores = (1.0 - expert_scores / np.sum(expert_scores)) * args.reca_range + 1.0 - args.reca_range / 2
-        except Exception:
-            expert_scores = np.ones(len(self.experts))
+        expert_scores = np.array([getattr(expert, 'trn_count', 1) for expert in self.experts], dtype=np.float64)
+        expert_scores = (1.0 - expert_scores / np.sum(expert_scores)) * args.reca_range + 1.0 - args.reca_range / 2
         with t.no_grad():
             assignment = [list() for i in range(len(handlers))]
             for dataset_id, handler in enumerate(handlers):
