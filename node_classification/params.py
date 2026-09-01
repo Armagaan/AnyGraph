@@ -1,4 +1,5 @@
 import argparse
+import os
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Model Parameters')
@@ -8,6 +9,7 @@ def parse_args():
     parser.add_argument('--epoch', default=100, type=int, help='number of epochs')
     parser.add_argument('--save_path', default='tem', help='file name to save model and training record')
     parser.add_argument('--load_model', default=None, help='model name to load')
+    parser.add_argument('--data_dir', default=os.environ.get('ANYGRAPH_DATA', ''), type=str, help='root directory holding the per-dataset folders (overrides $ANYGRAPH_DATA)')
     parser.add_argument('--data', default='ml1m', type=str, help='name of dataset')
     parser.add_argument('--tst_epoch', default=1, type=int, help='number of epoch to test while training')
     parser.add_argument('--gpu', default='0', type=str, help='indicates which gpu to use')

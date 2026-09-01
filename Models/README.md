@@ -1,1 +1,1 @@
-Download the pre-trained AnyGraph models from <a href='https://hkuhk-my.sharepoint.com/:u:/g/personal/lhaoxia_hku_hk/Efmm5TJm0B5EnmYzTqg8GWEB1loKzeIR5tcr3hPIOJDXXA?e=2wMgZC'>this link</a>.
+Download the pre-trained AnyGraph models from <a href='https://huggingface.co/hkuds/AnyGraph'>Hugging Face</a> and extract the archive so that the `.mod` files land in this directory.

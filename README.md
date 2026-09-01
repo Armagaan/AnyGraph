@@ -41,15 +41,30 @@
 - [x] 2024/08/20 Code is released.
 
 ## Environment Setup
-Download the data files at <a href='https://huggingface.co/datasets/hkuds/AnyGraph_datasets'>this link</a>. And fill in your own directories for data storage at function `get_data_files(self)` of class `DataHandler` in the file `data_handler.py`.
 
-Download the pre-trained AnyGraph models at <a href='https://huggingface.co/hkuds/AnyGraph/'>hugging face</a> or <a href='https://hkuhk-my.sharepoint.com/:u:/g/personal/lhaoxia_hku_hk/Efmm5TJm0B5EnmYzTqg8GWEB1loKzeIR5tcr3hPIOJDXXA?e=2wMgZC'>one drive</a>, and put it into `Models/`.
+**Dependencies**: the project uses [uv](https://docs.astral.sh/uv/). From the repository root:
 
-**Packages**: Our experiments were conducted with the following package versions:
-* python==3.10.13
-* torch==1.13.0
-* numpy==1.23.4
-* scipy==1.9.3
+```bash
+uv sync
+```
+
+This provisions Python and installs torch, numpy, scipy, setproctitle and scikit-learn.
+The torch wheels are pulled from the CUDA 12.4 index; if your toolkit differs, change the
+`pytorch-cu124` index URL in `pyproject.toml` to the matching build.
+
+**Data**: download the datasets from <a href='https://huggingface.co/datasets/hkuds/AnyGraph_datasets'>Hugging Face</a>
+and extract them. Point the code at the extracted `zero-shot datasets` directory — the one
+holding a folder per dataset — either per-run with `--data_dir`, or once via the environment:
+
+```bash
+export ANYGRAPH_DATA="/path/to/zero-shot datasets"
+```
+
+All commands below assume `ANYGRAPH_DATA` is set; otherwise append
+`--data_dir "/path/to/zero-shot datasets"` to each.
+
+**Pre-trained models**: download from <a href='https://huggingface.co/hkuds/AnyGraph'>Hugging Face</a>
+and extract so the `.mod` files land in `Models/`.
 
 **Device Requirements**: The training and testing of AnyGraph requires only one GPU with 24G memory (e.g. 3090, 4090). Using larger input graphs may require devices with larger memory.
 

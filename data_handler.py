@@ -6,9 +6,24 @@ import scipy.sparse as sp
 from Utils.TimeLogger import log
 import torch as t
 import torch.utils.data as data
-import torch_geometric.transforms as T
 from model import Feat_Projector, Adj_Projector, TopoEncoder
 import os
+
+def resolve_data_root():
+    """Root directory holding the per-dataset folders.
+
+    Set with --data_dir or the ANYGRAPH_DATA environment variable.
+    """
+    root = args.data_dir
+    if not root:
+        raise SystemExit(
+            'No dataset directory configured. Pass --data_dir /path/to/"zero-shot datasets" '
+            'or set the ANYGRAPH_DATA environment variable.'
+        )
+    if not os.path.isdir(root):
+        raise SystemExit('Dataset directory does not exist: ' + root)
+    return root
+
 
 class MultiDataHandler:
     def __init__(self, trn_datasets, tst_datasets_group):
@@ -55,7 +70,7 @@ class DataHandler:
         self.load_data()
     
     def get_data_files(self):
-        predir = f'/home/user_name/data/zero-shot datasets/{self.data_name}/'
+        predir = os.path.join(resolve_data_root(), self.data_name) + '/'
         if os.path.exists(predir + 'feats.pkl'):
             self.feat_file = predir + 'feats.pkl'
         else:
