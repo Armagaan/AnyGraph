@@ -7,10 +7,24 @@ from model import Expert, Feat_Projector, Adj_Projector, AnyGraph
 from data_handler import MultiDataHandler, DataHandler
 import numpy as np
 import pickle
+import random
 import os
 import setproctitle
 import time
 from sklearn.metrics import f1_score
+
+def set_seed(seed):
+    """Seed every RNG the training and evaluation paths draw from.
+
+    Without this, negative sampling, the per-step dataset downsampling, the
+    randomised SVD in the projectors, and graph-transformer anchor selection all
+    vary between otherwise identical runs.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    t.manual_seed(seed)
+    t.cuda.manual_seed_all(seed)
+
 
 class Exp:
     def __init__(self, multi_handler):
@@ -20,7 +34,7 @@ class Exp:
             print(f'Test group {group_id}', list(map(lambda x: x.data_name, tst_handlers)))
         self.metrics = dict()
         trn_mets = ['Loss', 'preLoss']
-        tst_mets = ['Recall', 'NDCG', 'Loss', 'preLoss']
+        tst_mets = ['Acc', 'F1', 'Loss', 'preLoss']
         mets = trn_mets + tst_mets
         for met in mets:
             if met in trn_mets:
@@ -50,8 +64,7 @@ class Exp:
         if args.load_model != None:
             self.load_model()
             stloc = len(self.metrics['TrainLoss']) * args.tst_epoch - (args.tst_epoch - 1)
-        best_ndcg, best_ep = 0, -1
-        early_stop = False
+        best_acc, best_ep = 0, -1
         for ep in range(stloc, args.epoch):
             tst_flag = (ep % args.tst_epoch == 0)
             start_time = time.time()
@@ -62,28 +75,35 @@ class Exp:
             end_time = time.time()
             print(f'NOTICE: {end_time-start_time}')
             if tst_flag:
+                group_accs = []
                 for handler_group_id in range(len(self.multi_handler.tst_handlers_group)):
                     tst_handlers = self.multi_handler.tst_handlers_group[handler_group_id]
                     self.model.assign_experts(tst_handlers, reca=False, log_assignment=True)
-                    recall, ndcg, tstnum = 0, 0, 0
+                    acc, f1, tstnum = 0, 0, 0
                     for i, handler in enumerate(tst_handlers):
                         reses = self.test_epoch(handler, i)
-                        log(self.make_print('handler.data_name', ep, reses, False))
-                        recall += reses['Recall'] * reses['tstNum']
-                        ndcg += reses['NDCG'] * reses['tstNum']
+                        log(self.make_print(handler.data_name, ep, reses, False))
+                        acc += reses['Acc'] * reses['tstNum']
+                        f1 += reses['F1'] * reses['tstNum']
                         tstnum += reses['tstNum']
-                    reses = {'Recall': recall / tstnum, 'NDCG': ndcg / tstnum}
+                    reses = {'Acc': acc / tstnum, 'F1': f1 / tstnum}
                     log(self.make_print('Test'+str(handler_group_id), ep, reses, tst_flag))
+                    group_accs.append(reses['Acc'])
 
-                    if reses['NDCG'] > best_ndcg:
-                        best_ndcg = reses['NDCG']
-                        best_ep = ep
+                # Select on the last test group: the zero-shot group under the
+                # 'A+B' setting, otherwise the only group.
+                if group_accs[-1] > best_acc:
+                    best_acc, best_ep = group_accs[-1], ep
+                    self.save_model(args.save_path + '_best')
                 self.save_history()
             print()
 
+        if best_ep >= 0:
+            log('Best epoch %d: Acc = %.4f, saved as %s_best' % (best_ep, best_acc, args.save_path))
+
         for test_group_id in range(len(self.multi_handler.tst_handlers_group)):
             repeat_times = 10
-            overall_recall, overall_ndcg = np.zeros(repeat_times), np.zeros(repeat_times)
+            overall_acc, overall_f1 = np.zeros(repeat_times), np.zeros(repeat_times)
             overall_tstnum = 0
             tst_handlers = self.multi_handler.tst_handlers_group[test_group_id]
             if args.assignment == 'one-graph-one-expert':
@@ -107,17 +127,17 @@ class Exp:
                         tot_reses[met + '_std'] = tem_arr.std()
                         tot_reses[met + '_mean'] = tem_arr.mean()
                     
-                    overall_recall += np.array(mets['Acc']) * tstnum
-                    overall_ndcg += np.array(mets['F1']) * tstnum
+                    overall_acc += np.array(mets['Acc']) * tstnum
+                    overall_f1 += np.array(mets['F1']) * tstnum
                     overall_tstnum += tstnum
                     log(self.make_print(f'Test', args.epoch, tot_reses, False, handler.data_name))
-            overall_recall /= overall_tstnum
-            overall_ndcg /= overall_tstnum
+            overall_acc /= overall_tstnum
+            overall_f1 /= overall_tstnum
             overall_res = dict()
-            overall_res['Recall_mean'] = overall_recall.mean()
-            overall_res['Recall_std'] = overall_recall.std()
-            overall_res['NDCG_mean'] = overall_ndcg.mean()
-            overall_res['NDCG_std'] = overall_ndcg.std()
+            overall_res['Acc_mean'] = overall_acc.mean()
+            overall_res['Acc_std'] = overall_acc.std()
+            overall_res['F1_mean'] = overall_f1.mean()
+            overall_res['F1_std'] = overall_f1.std()
             log(self.make_print('Overall Test', args.epoch, overall_res, False))
         self.save_history()
 
@@ -279,17 +299,19 @@ class Exp:
             allNdcg += ndcg
         return allRecall, allNdcg
     
+    def save_model(self, save_path):
+        content = {
+            'model': self.model,
+        }
+        t.save(content, '../Models/' + save_path + '.mod')
+        log('Model Saved: %s' % save_path)
+
     def save_history(self):
         if args.epoch == 0:
             return
         with open('../History/' + args.save_path + '.his', 'wb') as fs:
             pickle.dump(self.metrics, fs)
-
-        content = {
-            'model': self.model,
-        }
-        t.save(content, '../Models/' + args.save_path + '.mod')
-        log('Model Saved: %s' % args.save_path)
+        self.save_model(args.save_path)
 
     def load_model(self):
         # Checkpoints pickle the entire nn.Module, so weights_only=True
@@ -311,6 +333,7 @@ if __name__ == '__main__':
         raise Exception('Devices should be less than 2')
     else:
         args.devices = ['cuda:0', 'cuda:0']
+    set_seed(args.seed)
     logger.saveDefault = True
     setproctitle.setproctitle('akaxia_AutoGraph')
 
