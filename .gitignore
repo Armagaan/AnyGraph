@@ -1,2 +1,12 @@
 extract_code_structure.py
 .DS_Store
+
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+
+# Large downloaded artifacts (see README.md for the download links)
+Models/*.mod
+*.tar.gz
+*.zip
