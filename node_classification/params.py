@@ -15,7 +15,6 @@ def parse_args():
     parser.add_argument('--epoch_max_step', default=-1, type=int, help='indicates the maximum number of steps in one epoch, -1 denotes full steps')
     parser.add_argument('--trn_mode', default='train-all', type=str, help='[fewshot, train-all]')
     parser.add_argument('--tst_mode', default='tst', type=str, help='[tst, val]')
-    parser.add_argument('--eval_loss', default=True, type=bool, help='whether use CE loss to evaluate test performance')
     parser.add_argument('--ratio_fewshot_set', default=0.5, type=float, help='ratio of fewshot set')
     parser.add_argument('--shot', default=5, type=int, help='number of shots for each node')
     parser.add_argument('--tst_steps', default=-1, type=int, help='number of test steps, -1 indicates all')
@@ -42,5 +41,12 @@ def parse_args():
     parser.add_argument('--nn', default='mlp', type=str, help='what trainable network to use')
     parser.add_argument('--proj_trn_steps', default=100, type=int, help='number of training steps for one initial projection')
     parser.add_argument('--attempt_cache', default=10000000, type=int, help='number of training steps for one initial projection')
-    return parser.parse_args()
+    args = parser.parse_args()
+    # make_projectors() assumes these two are paired. Fail here rather than
+    # after loading every dataset.
+    if not ((args.tst_mode == 'tst' and args.trn_mode == 'train-all')
+            or (args.tst_mode == 'val' and args.trn_mode == 'fewshot')):
+        parser.error("--tst_mode/--trn_mode must be 'tst' with 'train-all', "
+                     "or 'val' with 'fewshot'")
+    return args
 args = parse_args()

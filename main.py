@@ -85,28 +85,25 @@ class Exp:
             overall_tstnum = 0
             tst_handlers = self.multi_handler.tst_handlers_group[test_group_id]
             for i, handler in enumerate(tst_handlers):
-                for topk in [args.topk]:
-                    args.topk = topk
-                    mets = dict()
-                    for _ in range(repeat_times):
-                        handler.make_projectors()
-                        self.model.assign_experts([handler], reca=False, log_assignment=False)
-                        reses = self.test_epoch(handler, 0)
-                        for met in reses:
-                            if met not in mets:
-                                mets[met] = []
-                            mets[met].append(reses[met])
-                    tstnum = reses['tstNum']
-                    tot_reses = dict()
+                mets = dict()
+                for _ in range(repeat_times):
+                    handler.make_projectors()
+                    self.model.assign_experts([handler], reca=False, log_assignment=False)
+                    reses = self.test_epoch(handler, 0)
                     for met in reses:
-                        tem_arr = np.array(mets[met])
-                        tot_reses[met + '_std'] = tem_arr.std()
-                        tot_reses[met + '_mean'] = tem_arr.mean()
-                    if topk == args.topk:
-                        overall_recall += np.array(mets['Recall']) * tstnum
-                        overall_ndcg += np.array(mets['NDCG']) * tstnum
-                        overall_tstnum += tstnum
-                    log(self.make_print(f'Test Top-{topk}', args.epoch, tot_reses, False, handler.data_name))
+                        if met not in mets:
+                            mets[met] = []
+                        mets[met].append(reses[met])
+                tstnum = reses['tstNum']
+                tot_reses = dict()
+                for met in reses:
+                    tem_arr = np.array(mets[met])
+                    tot_reses[met + '_std'] = tem_arr.std()
+                    tot_reses[met + '_mean'] = tem_arr.mean()
+                overall_recall += np.array(mets['Recall']) * tstnum
+                overall_ndcg += np.array(mets['NDCG']) * tstnum
+                overall_tstnum += tstnum
+                log(self.make_print(f'Test Top-{args.topk}', args.epoch, tot_reses, False, handler.data_name))
             overall_recall /= overall_tstnum
             overall_ndcg /= overall_tstnum
             overall_res = dict()
@@ -197,11 +194,10 @@ class Exp:
             tst_loader = handler.tst_loader
             self.model.eval()
             expert = self.model.summon(dataset_id)
-            ep_recall, ep_ndcg = 0, 0
-            ep_tstnum = len(tst_loader.dataset)
-            steps = max(ep_tstnum // args.tst_batch, 1)
+            ep_recall, ep_ndcg, ep_tstnum = 0, 0, 0
+            steps = max(len(tst_loader.dataset) // args.tst_batch, 1)
             for i, batch_data in enumerate(tst_loader):
-                if args.tst_steps != -1 and i > args.tst_steps:
+                if args.tst_steps != -1 and i >= args.tst_steps:
                     break
 
                 usrs = batch_data.long()
@@ -213,10 +209,9 @@ class Exp:
                 recall, ndcg = self.calc_recall_ndcg(top_locs, tst_loader.dataset.tstLocs, usrs)
                 ep_recall += recall
                 ep_ndcg += ndcg
+                ep_tstnum += usrs.shape[0]
                 log('Steps %d/%d: recall = %.2f, ndcg = %.2f          ' % (i, steps, recall, ndcg), save=False, oneline=True)
         ret = dict()
-        if args.tst_steps != -1:
-            ep_tstnum = args.tst_steps * args.tst_batch
         ret['Recall'] = ep_recall / ep_tstnum
         ret['NDCG'] = ep_ndcg / ep_tstnum
         ret['tstNum'] = ep_tstnum

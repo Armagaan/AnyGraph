@@ -202,7 +202,6 @@ class DataHandler:
             if self.feats is not None and args.proj_method != 'adj_svd':
                 tem = self.feats.to(args.devices[0])
                 projectors.append(Feat_Projector(tem))
-            assert args.tst_mode == 'tst' and args.trn_mode == 'train-all' or args.tst_mode == 'val' and args.trn_mode == 'fewshot'
             feats = projectors[0]()
             if len(projectors) == 2:
                 feats2 = projectors[1]()
