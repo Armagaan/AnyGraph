@@ -292,7 +292,9 @@ class Exp:
         log('Model Saved: %s' % args.save_path)
 
     def load_model(self):
-        ckp = t.load('../Models/' + args.load_model + '.mod')
+        # Checkpoints pickle the entire nn.Module, so weights_only=True
+        # (the torch>=2.6 default) cannot load them.
+        ckp = t.load('../Models/' + args.load_model + '.mod', weights_only=False)
         self.model = ckp['model']
         # self.model.set_initial_projection(self.handler.torch_adj)
         self.opt = t.optim.Adam(self.model.parameters(), lr=args.lr, weight_decay=0)

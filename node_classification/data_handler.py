@@ -135,7 +135,7 @@ class DataHandler:
             idxs = t.stack([row, col], dim=0)
             vals = t.from_numpy(normed_asym_mat.data).float()
             shape = t.Size(normed_asym_mat.shape)
-            asym_adj = t.sparse.FloatTensor(idxs, vals, shape)
+            asym_adj = t.sparse_coo_tensor(idxs, vals, shape)
             return asym_adj
         elif unidirectional_for_asym:
             mat = (mat != 0) * 1.0
@@ -143,7 +143,7 @@ class DataHandler:
             idxs = t.from_numpy(np.vstack([mat.row, mat.col]).astype(np.int64))
             vals = t.from_numpy(mat.data.astype(np.float32))
             shape = t.Size(mat.shape)
-            return t.sparse.FloatTensor(idxs, vals, shape)
+            return t.sparse_coo_tensor(idxs, vals, shape)
         else:
             # make ui adj
             a = sp.csr_matrix((args.user_num, args.user_num))
@@ -158,7 +158,7 @@ class DataHandler:
             idxs = t.from_numpy(np.vstack([mat.row, mat.col]).astype(np.int64))
             vals = t.from_numpy(mat.data.astype(np.float32))
             shape = t.Size(mat.shape)
-            return t.sparse.FloatTensor(idxs, vals, shape)
+            return t.sparse_coo_tensor(idxs, vals, shape)
 
     def load_data(self):
         tst_mat = self.load_one_file(self.tstfile)
