@@ -8,6 +8,8 @@ A fork of **AnyGraph** (arXiv 2408.10700), a graph foundation model doing zero-s
 
 The fork diverges from upstream `c2c5bfe` by a pre-experimentation cleanup (branches `fix/*`, `chore/*`, `refactor/*`, all merged into `dev`). `main` is a pristine upstream mirror — never commit to it; cut upstream-candidate branches from it and merge them into `dev` to run.
 
+All nine cleanup branches are pushed to `origin` and merged into `dev`. **No PRs have been opened** — the five `fix/*` and `chore/*` branches are shaped as upstream candidates and are waiting on manual review. `main` is 0/0 against `upstream/main`.
+
 ## Environment and setup
 
 ```bash
@@ -18,6 +20,28 @@ export ANYGRAPH_DATA="/path/to/zero-shot datasets"   # or pass --data_dir
 torch 2.6.0+cu124, numpy 2.x, scipy 1.18, scikit-learn, setproctitle. **No `torch_geometric`** — it was imported but never used. Do not re-pin to the README's original torch 1.13: the hardware here is Ada (sm_89), which torch 1.13 predates.
 
 Datasets and pretrained `.mod` checkpoints come from HuggingFace (`hkuds/AnyGraph_datasets`, `hkuds/AnyGraph`). The OneDrive link in the original README is dead.
+
+## Local state on this machine
+
+None of this is in git, and none of it is reconstructible from the repo:
+
+- **Data root**: `/mnt/data1/burouj/anygraph-data/zero-shot datasets` — 34 dataset directories plus `node_data/` (5 more), 9.3 GB. The path contains a space, so always quote it:
+  `export ANYGRAPH_DATA="/mnt/data1/burouj/anygraph-data/zero-shot datasets"`
+- **`Models/` mixes tracked and untracked files.** Tracked: `README.md`, `archive_manifest.json`. Untracked and gitignored: `pretrain_link{1,2}.mod` (7.57 GB and 3.00 GB — the published legacy pickles) and `pretrain_link{1,2}.state.pt` (67.6 MB each — state-dict archives from `scripts/archive_checkpoints.py`). The manifest records each pickle's SHA256, so `--verify` can still prove the archives match their sources.
+- The original downloads sit in the repo root, gitignored: `AnyGraph pretrained models .tar.gz` (9.5 GB) and `zero-shot datasets.zip` (5.0 GB). Both have been extracted and verified, so they are safe to delete to reclaim ~14.5 GB.
+- **`.git/info/exclude`** (local, never committed) carries `Models/*.mod`, `Models/*.pt`, `*.tar.gz`, `*.zip`, `.venv/`, `__pycache__/`. It has to live there rather than in `.gitignore` because branches cut from `main` predate the `.gitignore` update — on such a branch **`git add -A` will try to hash ~25 GB and hang**. Stage explicit paths when working on a branch cut from `main`.
+
+## Reference numbers
+
+Zero-shot, `--seed 42`, for spotting regressions after a change. Approximate by nature — see the reproducibility note below; treat a deviation as real only if it exceeds the spread the run itself reports.
+
+| run | expect |
+| --- | --- |
+| `--load pretrain_link1 --epoch 0 --dataset cora` | Recall@20 ≈ 0.822, NDCG@20 ≈ 0.66 |
+| `--load pretrain_link1 --epoch 0 --dataset ml1m` | Recall@20 ≈ 0.099, NDCG@20 ≈ 0.157 |
+| node: `--load pretrain_link2 --epoch 0 --dataset node` | Acc ≈ 0.65, macro-F1 ≈ 0.44 |
+
+A full-group run (`--dataset link2`) takes hours; use a single small dataset for smoke tests.
 
 ## Commands
 
@@ -76,3 +100,4 @@ These projectors are **not learned**. They are recomputed every `handler.reproj_
 - **`args` still holds run configuration globally**, but per-dataset shapes (`node_num`, `user_num`, `item_num`) now live on the handler. Don't put dataset-specific state back on `args`.
 - `--tst_mode`/`--trn_mode` must pair as `tst`+`train-all` or `val`+`fewshot`; validated at argparse time.
 - `node_classification/main.py` reads and writes `../Models/` and `../History/` because it runs from its own directory.
+- **Class order in [data_handler.py](data_handler.py) is load-bearing.** `NodeDataHandler` must sit after *every* `DataHandler` method, including `make_projectors`. Inserting it mid-class silently rehomes the methods below it onto the subclass, and `DataHandler` loses them — this bit once during the unification, surfacing only as `AttributeError` at runtime.
