@@ -112,10 +112,10 @@ class DataHandler:
             return tem.dot(d_inv_sqrt_mat).tocoo()
     
     def unique_numpy(self, row, col):
-        hash_vals = row * args.node_num + col
+        hash_vals = row * self.node_num + col
         hash_vals = np.unique(hash_vals).astype(np.int64)
-        col = hash_vals % args.node_num
-        row = (hash_vals - col).astype(np.int64) // args.node_num
+        col = hash_vals % self.node_num
+        row = (hash_vals - col).astype(np.int64) // self.node_num
         return row, col
 
     def make_torch_adj(self, mat, unidirectional_for_asym=False):
@@ -146,8 +146,8 @@ class DataHandler:
             return t.sparse_coo_tensor(idxs, vals, shape)
         else:
             # make ui adj
-            a = sp.csr_matrix((args.user_num, args.user_num))
-            b = sp.csr_matrix((args.item_num, args.item_num))
+            a = sp.csr_matrix((self.user_num, self.user_num))
+            b = sp.csr_matrix((self.item_num, self.item_num))
             mat = sp.vstack([sp.hstack([a, mat]), sp.hstack([mat.transpose(), b])])
             mat = (mat != 0) * 1.0
             if args.selfloop == 1:
@@ -167,19 +167,18 @@ class DataHandler:
         fewshot_mat = self.load_one_file(self.fewshotfile)
         if self.feat_file is not None:
             self.feats = t.from_numpy(self.load_feats(self.feat_file)).float()
-            self.feats = self.feats
-            args.featdim = self.feats.shape[1]
         else:
             self.feats = None
-            args.featdim = args.latdim
 
         if trn_mat.shape[0] != trn_mat.shape[1]:
-            args.user_num, args.item_num = trn_mat.shape
-            args.node_num = args.user_num + args.item_num
-            print('Dataset: {data_name}, User num: {user_num}, Item num: {item_num}, Node num: {node_num}, Edge num: {edge_num}'.format(data_name=self.data_name, user_num=args.user_num, item_num=args.item_num, node_num=args.node_num, edge_num=trn_mat.nnz))
+            self.user_num, self.item_num = trn_mat.shape
+            self.node_num = self.user_num + self.item_num
+            print('Dataset: {data_name}, User num: {user_num}, Item num: {item_num}, Node num: {node_num}, Edge num: {edge_num}'.format(data_name=self.data_name, user_num=self.user_num, item_num=self.item_num, node_num=self.node_num, edge_num=trn_mat.nnz))
         else:
-            args.node_num = trn_mat.shape[0]
-            print('Dataset: {data_name}, Node num: {node_num}, Edge num: {edge_num}'.format(data_name=self.data_name, node_num=args.node_num, edge_num=trn_mat.nnz+val_mat.nnz+tst_mat.nnz))
+            # Symmetric graphs have no user/item split.
+            self.user_num = self.item_num = None
+            self.node_num = trn_mat.shape[0]
+            print('Dataset: {data_name}, Node num: {node_num}, Edge num: {edge_num}'.format(data_name=self.data_name, node_num=self.node_num, edge_num=trn_mat.nnz+val_mat.nnz+tst_mat.nnz))
         if args.tst_mode == 'tst':
             tst_data = TstData(tst_mat, trn_mat)
             self.tst_loader = data.DataLoader(tst_data, batch_size=args.tst_batch, shuffle=False, num_workers=0)
