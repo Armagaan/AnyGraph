@@ -18,6 +18,60 @@ def is_oom(err):
     return isinstance(err, RuntimeError) and 'out of memory' in str(err).lower()
 
 
+
+CHECKPOINT_VERSION = 1
+
+# Scalars AnyGraph and its submodules read from args at construction time.
+ARCH_KEYS = ('nn', 'latdim', 'expert_num', 'fc_layer', 'gt_layer', 'head')
+
+
+def describe_model(model):
+    """Recover the construction-time configuration of an AnyGraph instance.
+
+    state_dict() carries tensor shapes but not the scalars the modules were
+    built from, and it drops trn_count entirely -- that is a plain attribute,
+    not a buffer, and assign_experts() needs it for load balancing.
+    """
+    experts = list(model.experts)
+    first = experts[0].trainable_nn
+    kind = type(first).__name__
+    if kind == 'MLP':
+        layers = list(first.dense_layers)
+        config = {'nn': 'mlp', 'fc_layer': len(layers),
+                  'latdim': int(layers[0].linear.weight.shape[0])}
+    elif kind == 'GraphTransformer':
+        layers = list(first.gt_layers)
+        config = {'nn': 'gt', 'gt_layer': len(layers),
+                  'head': int(layers[0].multi_head_attention.num_heads),
+                  'latdim': int(layers[0].multi_head_attention.embed_dim)}
+    else:
+        raise Exception('Unrecognized trainable_nn: ' + kind)
+    config['expert_num'] = len(experts)
+    config['trn_count'] = [int(getattr(e, 'trn_count', 1)) for e in experts]
+    return config
+
+
+def apply_checkpoint_config(config):
+    """Point the global args at the architecture a checkpoint was built with.
+
+    The projectors read args.latdim too -- Adj_Projector uses it as the SVD rank
+    -- so loading a checkpoint under a mismatched --latdim would feed the experts
+    embeddings of the wrong width. The checkpoint wins, and says so.
+    """
+    for key in ARCH_KEYS:
+        if key not in config:
+            continue
+        current = getattr(args, key, None)
+        if current != config[key]:
+            log('checkpoint overrides --%s: %s -> %s' % (key, current, config[key]))
+            setattr(args, key, config[key])
+
+
+def restore_trn_counts(model, config):
+    for expert, count in zip(model.experts, config.get('trn_count', [])):
+        expert.trn_count = count
+
+
 class FeedForwardLayer(nn.Module):
     def __init__(self, in_feat, out_feat, bias=True, act=None):
         super(FeedForwardLayer, self).__init__()

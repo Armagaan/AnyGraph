@@ -3,7 +3,9 @@ from torch import nn
 import Utils.TimeLogger as logger
 from Utils.TimeLogger import log
 from params import args
-from model import Expert, Feat_Projector, Adj_Projector, AnyGraph
+from model import (Expert, Feat_Projector, Adj_Projector, AnyGraph,
+                   CHECKPOINT_VERSION, describe_model, apply_checkpoint_config,
+                   restore_trn_counts)
 from data_handler import MultiDataHandler, DataHandler
 import numpy as np
 import pickle
@@ -301,7 +303,9 @@ class Exp:
     
     def save_model(self, save_path):
         content = {
-            'model': self.model,
+            'version': CHECKPOINT_VERSION,
+            'config': describe_model(self.model),
+            'state_dict': {k: v.detach().cpu() for k, v in self.model.state_dict().items()},
         }
         t.save(content, '../Models/' + save_path + '.mod')
         log('Model Saved: %s' % save_path)
@@ -313,12 +317,25 @@ class Exp:
             pickle.dump(self.metrics, fs)
         self.save_model(args.save_path)
 
+    def rebuild_from_checkpoint(self, ckp):
+        """Reconstruct the model from a checkpoint, in either format."""
+        if 'state_dict' not in ckp:
+            # Checkpoints published with the paper pickle the whole nn.Module,
+            # so they only load while model.py's class names and module paths
+            # are unchanged. Re-saving migrates them to the current format.
+            log('Loaded a legacy whole-module checkpoint; re-save to migrate it')
+            return ckp['model']
+        apply_checkpoint_config(ckp['config'])
+        model = AnyGraph()
+        model.load_state_dict(ckp['state_dict'])
+        restore_trn_counts(model, ckp['config'])
+        return model
+
     def load_model(self):
-        # Checkpoints pickle the entire nn.Module, so weights_only=True
-        # (the torch>=2.6 default) cannot load them.
-        ckp = t.load('../Models/' + args.load_model + '.mod', weights_only=False)
-        self.model = ckp['model']
-        # self.model.set_initial_projection(self.handler.torch_adj)
+        # weights_only=True (the torch>=2.6 default) cannot unpickle the legacy
+        # whole-module checkpoints handled below.
+        ckp = t.load('../Models/' + args.load_model + '.mod', map_location='cpu', weights_only=False)
+        self.model = self.rebuild_from_checkpoint(ckp)
         self.opt = t.optim.Adam(self.model.parameters(), lr=args.lr, weight_decay=0)
 
         with open('../History/' + args.load_model + '.his', 'rb') as fs:

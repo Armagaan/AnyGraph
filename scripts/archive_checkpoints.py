@@ -37,32 +37,6 @@ def sha256(path, chunk=1 << 20):
     return h.hexdigest()
 
 
-def describe(model):
-    """Recover the construction-time configuration from a loaded AnyGraph."""
-    experts = list(model.experts)
-    first = experts[0].trainable_nn
-    kind = type(first).__name__
-
-    if kind == 'MLP':
-        layers = list(first.dense_layers)
-        latdim = layers[0].linear.weight.shape[0]
-        cfg = {'nn': 'mlp', 'fc_layer': len(layers)}
-    elif kind == 'GraphTransformer':
-        layers = list(first.gt_layers)
-        latdim = layers[0].multi_head_attention.embed_dim
-        cfg = {'nn': 'gt', 'gt_layer': len(layers),
-               'head': layers[0].multi_head_attention.num_heads}
-    else:
-        raise SystemExit('Unrecognised trainable_nn: ' + kind)
-
-    cfg['latdim'] = int(latdim)
-    cfg['expert_num'] = len(experts)
-    # trn_count drives the load-balancing factor in assign_experts(); it is a
-    # plain attribute, so state_dict() would drop it.
-    cfg['trn_count'] = [int(getattr(e, 'trn_count', 1)) for e in experts]
-    return cfg
-
-
 def load_module(path):
     # Unpickling imports model.py, which imports params.py, which calls
     # parse_args() at module scope against sys.argv. Hide our own flags from it.
@@ -80,7 +54,9 @@ def convert(mod_path, out_path):
     print('reading  ' + mod_path)
     digest = sha256(mod_path)
     model = load_module(mod_path)
-    cfg = describe(model)
+    # load_module has already imported model.py under a neutralised argv.
+    from model import describe_model
+    cfg = describe_model(model)
     state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
     t.save({
