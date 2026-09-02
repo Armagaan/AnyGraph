@@ -1,3 +1,10 @@
+import os
+import sys
+
+# This entry point reuses the modules in the repository root; only the training
+# and evaluation loop below is specific to node classification.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch as t
 from torch import nn
 import Utils.TimeLogger as logger
@@ -6,7 +13,7 @@ from params import args
 from model import (Expert, Feat_Projector, Adj_Projector, AnyGraph,
                    CHECKPOINT_VERSION, describe_model, apply_checkpoint_config,
                    restore_trn_counts)
-from data_handler import MultiDataHandler, DataHandler
+from data_handler import MultiDataHandler, NodeDataHandler
 import numpy as np
 import pickle
 import random
@@ -400,9 +407,9 @@ if __name__ == '__main__':
 
     # trn_datasets = tst_datasets = ['products_home']
     if '+' not in args.dataset_setting:
-        handler = MultiDataHandler(trn_datasets, [tst_datasets])
+        handler = MultiDataHandler(trn_datasets, [tst_datasets], handler_cls=NodeDataHandler)
     else:
-        handler = MultiDataHandler(trn_datasets, [trn_datasets, tst_datasets])
+        handler = MultiDataHandler(trn_datasets, [trn_datasets, tst_datasets], handler_cls=NodeDataHandler)
     log('Load Data')
 
     exp = Exp(handler)

@@ -18,6 +18,8 @@ def parse_args():
     parser.add_argument('--trn_mode', default='train-all', type=str, help='[fewshot, train-all]')
     parser.add_argument('--tst_mode', default='tst', type=str, help='[tst, val]')
     parser.add_argument('--ratio_fewshot', default=0.1, type=float, help='ratio of fewshot set')
+    parser.add_argument('--ratio_fewshot_set', default=0.5, type=float, help='ratio of fewshot set (node classification)')
+    parser.add_argument('--shot', default=5, type=int, help='number of shots per node (node classification)')
     parser.add_argument('--tst_steps', default=-1, type=int, help='number of test steps, -1 indicates all')
 
     parser.add_argument('--reg', default=1e-7, type=float, help='weight decay regularizer')
@@ -36,6 +38,7 @@ def parse_args():
     parser.add_argument('--selfloop', default=0, type=int, help='indicating using self-loop or not')
     parser.add_argument('--niter', default=2, type=int, help='number of iterations in svd')
     parser.add_argument('--expert_num', default=8, type=int, help='number of experts')
+    parser.add_argument('--assignment', default='top1', type=str, help='expert routing: [top1, top2, one-graph-one-expert]')
     parser.add_argument('--loss', default='ce', type=str, help='loss function')
     parser.add_argument('--proj_method', default='both', type=str, help='feature projection method')
     parser.add_argument('--nn', default='mlp', type=str, help='what trainable network to use')
