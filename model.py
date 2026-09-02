@@ -312,6 +312,15 @@ class Expert(nn.Module):
         all_preds = anc_embeds @ cand_embeds.T * (1 - dense_mat) - dense_mat * 1e8
         return all_preds
 
+    def pred_for_node_test(self, nodes, cand_size, feats, rerun_embed=True):
+        """Node classification: the trailing cand_size rows are class embeddings."""
+        if rerun_embed:
+            self.final_embeds = self.forward(feats)
+        final_embeds = self.final_embeds
+        anc_embeds = final_embeds[nodes]
+        class_embeds = final_embeds[-cand_size:]
+        return t.argmax(anc_embeds @ class_embeds.T, dim=-1)
+
     def attempt(self, topo_embeds, dataset):
         final_embeds = self.trainable_nn(topo_embeds)
         all_rows, all_cols, all_negs = list(map(lambda x: t.from_numpy(x).long().to(args.devices[1]), [dataset.ancs, dataset.poss, dataset.negs]))
@@ -345,10 +354,23 @@ class AnyGraph(nn.Module):
         self.experts = nn.ModuleList([Expert() for _ in range(args.expert_num)]).cuda()
         self.opts = list(map(lambda expert: t.optim.Adam(expert.parameters(), lr=args.lr, weight_decay=0), self.experts))
         
+    def one_graph_one_expert(self, handlers, log_assignment=False):
+        self.assignment = list(range(len(handlers)))
+        if log_assignment:
+            print('\n----------\nAssignment')
+            for dataset_id, handler in enumerate(handlers):
+                print(handler.data_name, self.assignment[dataset_id])
+            print('----------\n')
+
     def assign_experts(self, handlers, reca=True, log_assignment=False):
         if args.expert_num == 1:
             self.assignment = [0] * len(handlers)
             return
+        if args.assignment == 'one-graph-one-expert':
+            self.one_graph_one_expert(handlers, log_assignment)
+            return
+        if args.assignment not in ['top1', 'top2']:
+            raise Exception('Unrecognized assigning method: ' + str(args.assignment))
         expert_scores = np.array([getattr(expert, 'trn_count', 1) for expert in self.experts], dtype=np.float64)
         expert_scores = (1.0 - expert_scores / np.sum(expert_scores)) * args.reca_range + 1.0 - args.reca_range / 2
         with t.no_grad():
@@ -362,6 +384,11 @@ class AnyGraph(nn.Module):
                         score *= expert_scores[expert_id]
                     assignment[dataset_id].append((expert_id, score))
                 assignment[dataset_id].sort(key=lambda x: x[1], reverse=True)
+                if args.assignment == 'top2':
+                    # Coin-flip between the top two when they are near-tied.
+                    top, second = assignment[dataset_id][0], assignment[dataset_id][1]
+                    if top[1] - second[1] < 0.05 and np.random.uniform() > 0.5:
+                        assignment[dataset_id][0], assignment[dataset_id][1] = second, top
             if log_assignment:
                 print('\n----------\nAssignment')
                 for dataset_id, handler in enumerate(handlers):

@@ -26,7 +26,8 @@ def resolve_data_root():
 
 
 class MultiDataHandler:
-    def __init__(self, trn_datasets, tst_datasets_group):
+    def __init__(self, trn_datasets, tst_datasets_group, handler_cls=None):
+        handler_cls = handler_cls or DataHandler
         all_datasets = trn_datasets
         all_tst_datasets = []
         for tst_datasets in tst_datasets_group:
@@ -39,7 +40,7 @@ class MultiDataHandler:
         for data_name in all_datasets:
             trn_flag = data_name in trn_datasets
             tst_flag = data_name in all_tst_datasets
-            handler = DataHandler(data_name)
+            handler = handler_cls(data_name)
             if trn_flag:
                 self.trn_handlers.append(handler)
             if tst_flag:
@@ -62,6 +63,18 @@ class MultiDataHandler:
             trn_handler.make_projectors()
 
 class DataHandler:
+    """Link prediction over one dataset.
+
+    Subclasses vary the task by overriding data_subdir, fewshot_filename() and
+    load_data(); everything else -- normalization, adjacency construction and
+    projection -- is shared.
+    """
+
+    # Subdirectory of the data root holding this task's datasets, if any.
+    data_subdir = None
+    # Target samples per training step, used for ratio_500_all.
+    step_sample_target = 500
+
     def __init__(self, data_name):
         self.data_name = data_name
         self.get_data_files()
@@ -69,15 +82,22 @@ class DataHandler:
         self.topo_encoder = TopoEncoder()
         self.load_data()
     
+    def fewshot_filename(self):
+        return 'partial_mat_{shot}.pkl'.format(shot=args.ratio_fewshot)
+
     def get_data_files(self):
-        predir = os.path.join(resolve_data_root(), self.data_name) + '/'
+        parts = [resolve_data_root()]
+        if self.data_subdir is not None:
+            parts.append(self.data_subdir)
+        parts.append(self.data_name)
+        predir = os.path.join(*parts) + '/'
         if os.path.exists(predir + 'feats.pkl'):
             self.feat_file = predir + 'feats.pkl'
         else:
             self.feat_file = None
         self.trnfile = predir + 'trn_mat.pkl'
         self.tstfile = predir + 'tst_mat.pkl'
-        self.fewshotfile = predir + 'partial_mat_{shot}.pkl'.format(shot=args.ratio_fewshot)
+        self.fewshotfile = predir + self.fewshot_filename()
         self.valfile = predir + 'val_mat.pkl'
 
     def load_one_file(self, filename):
@@ -160,6 +180,26 @@ class DataHandler:
             shape = t.Size(mat.shape)
             return t.sparse_coo_tensor(idxs, vals, shape)
 
+    def set_shapes(self, trn_mat, edge_num):
+        if trn_mat.shape[0] != trn_mat.shape[1]:
+            self.user_num, self.item_num = trn_mat.shape
+            self.node_num = self.user_num + self.item_num
+            print('Dataset: {data_name}, User num: {user_num}, Item num: {item_num}, Node num: {node_num}, Edge num: {edge_num}'.format(data_name=self.data_name, user_num=self.user_num, item_num=self.item_num, node_num=self.node_num, edge_num=trn_mat.nnz))
+        else:
+            # Symmetric graphs have no user/item split.
+            self.user_num = self.item_num = None
+            self.node_num = trn_mat.shape[0]
+            print('Dataset: {data_name}, Node num: {node_num}, Edge num: {edge_num}'.format(data_name=self.data_name, node_num=self.node_num, edge_num=edge_num))
+
+    def finalize_loading(self):
+        if self.trn_mat.shape[0] == self.trn_mat.shape[1]:
+            self.asym_adj = self.trn_input_adj
+        else:
+            self.asym_adj = self.make_torch_adj(self.trn_mat, unidirectional_for_asym=True)
+        self.make_projectors()
+        self.reproj_steps = max(len(self.trn_loader.dataset) // (10 * args.batch), args.proj_trn_steps)
+        self.ratio_500_all = self.step_sample_target / len(self.trn_loader)
+
     def load_data(self):
         tst_mat = self.load_one_file(self.tstfile)
         val_mat = self.load_one_file(self.valfile)
@@ -170,15 +210,7 @@ class DataHandler:
         else:
             self.feats = None
 
-        if trn_mat.shape[0] != trn_mat.shape[1]:
-            self.user_num, self.item_num = trn_mat.shape
-            self.node_num = self.user_num + self.item_num
-            print('Dataset: {data_name}, User num: {user_num}, Item num: {item_num}, Node num: {node_num}, Edge num: {edge_num}'.format(data_name=self.data_name, user_num=self.user_num, item_num=self.item_num, node_num=self.node_num, edge_num=trn_mat.nnz))
-        else:
-            # Symmetric graphs have no user/item split.
-            self.user_num = self.item_num = None
-            self.node_num = trn_mat.shape[0]
-            print('Dataset: {data_name}, Node num: {node_num}, Edge num: {edge_num}'.format(data_name=self.data_name, node_num=self.node_num, edge_num=trn_mat.nnz+val_mat.nnz+tst_mat.nnz))
+        self.set_shapes(trn_mat, trn_mat.nnz + val_mat.nnz + tst_mat.nnz)
         if args.tst_mode == 'tst':
             tst_data = TstData(tst_mat, trn_mat)
             self.tst_loader = data.DataLoader(tst_data, batch_size=args.tst_batch, shuffle=False, num_workers=0)
@@ -210,14 +242,9 @@ class DataHandler:
         else:
             raise Exception('Specify proper train mode')   
 
-        if self.trn_mat.shape[0] == self.trn_mat.shape[1]:
-            self.asym_adj = self.trn_input_adj
-        else:
-            self.asym_adj = self.make_torch_adj(self.trn_mat, unidirectional_for_asym=True)
-        self.make_projectors()
-        self.reproj_steps = max(len(self.trn_loader.dataset) // (10 * args.batch), args.proj_trn_steps)
-        self.ratio_500_all = 500 / len(self.trn_loader)
-    
+        self.finalize_loading()
+
+
     def make_projectors(self):
         with t.no_grad():
             projectors = []
@@ -250,6 +277,39 @@ class DataHandler:
                 self.projectors = t.concat(projectors_list, dim=-1)
             t.cuda.empty_cache()
 
+
+class NodeDataHandler(DataHandler):
+    """Node classification: tst_mat holds node/class pairs, and there is no
+    validation split, so the link prediction test and fewshot paths do not apply.
+    """
+
+    data_subdir = 'node_data'
+    step_sample_target = 250
+
+    def fewshot_filename(self):
+        return 'fewshot_mat_{shot}.pkl'.format(shot=args.shot)
+
+    def load_data(self):
+        tst_mat = self.load_one_file(self.tstfile)
+        trn_mat = self.load_one_file(self.trnfile)
+        if self.feat_file is not None:
+            self.feats = t.from_numpy(self.load_feats(self.feat_file)).float()
+        else:
+            self.feats = None
+
+        self.set_shapes(trn_mat, trn_mat.nnz + tst_mat.nnz)
+        if args.tst_mode != 'tst':
+            raise Exception('Validation not made for node classification')
+        tst_data = NodeTstData(tst_mat)
+        self.tst_loader = data.DataLoader(tst_data, batch_size=args.tst_batch, shuffle=False, num_workers=0)
+        self.tst_input_adj = self.make_torch_adj(trn_mat)
+
+        self.trn_mat = trn_mat
+        trn_data = TrnData(self.trn_mat)
+        self.trn_loader = data.DataLoader(trn_data, batch_size=args.batch, shuffle=True, num_workers=0)
+        self.trn_input_adj = self.tst_input_adj
+        self.finalize_loading()
+    
 class TstData(data.Dataset):
     def __init__(self, coomat, trn_mat):
         self.csrmat = (trn_mat.tocsr() != 0) * 1.0
@@ -271,6 +331,17 @@ class TstData(data.Dataset):
 
     def __getitem__(self, idx):
         return self.tst_nodes[idx]
+
+class NodeTstData(data.Dataset):
+    def __init__(self, tst_mat):
+        self.class_num = tst_mat.shape[1]
+        self.nodes, self.labels = tst_mat.row, tst_mat.col
+
+    def __len__(self):
+        return len(self.nodes)
+
+    def __getitem__(self, idx):
+        return self.nodes[idx], self.labels[idx]
 
 class TrnData(data.Dataset):
     def __init__(self, coomat):
