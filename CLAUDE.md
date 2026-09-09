@@ -6,9 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A fork of **AnyGraph** (arXiv 2408.10700), a graph foundation model doing zero-shot link prediction / node classification across 30+ heterogeneous graph datasets via a Mixture-of-Experts of graph experts. Research code: no test suite, no linter, everything runs through `main.py`.
 
-The fork diverges from upstream `c2c5bfe` by a pre-experimentation cleanup (branches `fix/*`, `chore/*`, `refactor/*`, all merged into `dev`). `main` is a pristine upstream mirror — never commit to it; cut upstream-candidate branches from it and merge them into `dev` to run.
+The fork diverges from upstream `c2c5bfe` by a pre-experimentation cleanup (`fix/*`, `chore/*`, `refactor/*`) and by fork-only features (`feat/*`), all merged into `dev`. `main` is a pristine upstream mirror — never commit to it; cut upstream-candidate branches from it and merge them into `dev` to run.
 
-All nine cleanup branches are pushed to `origin` and merged into `dev`. **No PRs have been opened** — the five `fix/*` and `chore/*` branches are shaped as upstream candidates and are waiting on manual review. `main` is 0/0 against `upstream/main`.
+Branch state:
+
+- The nine cleanup branches are pushed and merged into `dev`. **No PRs have been opened** — the five `fix/*` and `chore/*` branches are shaped as upstream candidates and are waiting on manual review.
+- `feat/adhoc-dataset-sets` and `feat/run-naming` are fork-only, cut from `dev` and merged back into it. The branch refs were never pushed, but their commits reached `origin` through the `dev` merges. They are not upstream-shaped and should not be cut from `main`.
+- Each `feat/*` has a design record in `docs/feature-*.md` (motivation, decisions, status). New features are written up there first as a spec.
+- `main` is 0/0 against `upstream/main`.
+
+Work is batched into one commit per unit of work rather than a commit per change, and pushing is a separate step done on request.
 
 ## Environment and setup
 
@@ -28,8 +35,9 @@ None of this is in git, and none of it is reconstructible from the repo:
 - **Data root**: `/mnt/data1/burouj/anygraph-data/zero-shot datasets` — 34 dataset directories plus `node_data/` (5 more), 9.3 GB. The path contains a space, so always quote it:
   `export ANYGRAPH_DATA="/mnt/data1/burouj/anygraph-data/zero-shot datasets"`
 - **`Models/` mixes tracked and untracked files.** Tracked: `README.md`, `archive_manifest.json`. Untracked and gitignored: `pretrain_link{1,2}.mod` (7.57 GB and 3.00 GB — the published legacy pickles) and `pretrain_link{1,2}.state.pt` (67.6 MB each — state-dict archives from `scripts/archive_checkpoints.py`). The manifest records each pickle's SHA256, so `--verify` can still prove the archives match their sources.
-- The original downloads sit in the repo root, gitignored: `AnyGraph pretrained models .tar.gz` (9.5 GB) and `zero-shot datasets.zip` (5.0 GB). Both have been extracted and verified, so they are safe to delete to reclaim ~14.5 GB.
-- **`.git/info/exclude`** (local, never committed) carries `Models/*.mod`, `Models/*.pt`, `*.tar.gz`, `*.zip`, `.venv/`, `__pycache__/`, `anygraph.pdf`. It has to live there rather than in `.gitignore` because branches cut from `main` predate the `.gitignore` update — on such a branch **`git add -A` will try to hash ~25 GB and hang**. Stage explicit paths when working on a branch cut from `main`.
+- The original downloads sit in the repo root, gitignored: `AnyGraph pretrained models .tar.gz` (9.5 GB) and `zero-shot datasets.zip` (5.0 GB). **Keep the models tarball.** It is the only byte-exact recovery path for a damaged `.mod`, and it has already been needed once: a stray `--save pretrain_link1` overwrote the published baseline, and it was restored with
+  `tar -xzf "AnyGraph pretrained models .tar.gz" -C <staging> --wildcards '*pretrain_link1.mod'` (~2 min), then checked against `archive_manifest.json`'s SHA256. The `.state.pt` archives recover the *weights* but not the original file, so `--verify` could never pass again from those alone.
+- **`.git/info/exclude`** (local, never committed) carries `Models/*.mod`, `Models/*.pt`, `*.tar.gz`, `*.zip`, `.venv/`, `__pycache__/`, `anygraph.pdf`, `logs/`, `.restore/`, `runs/`. It has to live there rather than in `.gitignore` because branches cut from `main` predate the `.gitignore` update — on such a branch **`git add -A` will try to hash ~25 GB and hang**. Stage explicit paths when working on a branch cut from `main`. `runs/` is in `.gitignore` too, but only on `dev`; it needs the exclude entry as well, or run directories — which hold `final.mod` and `best.mod` — go unignored on an upstream-candidate branch.
 
 ## Reference numbers
 
@@ -43,7 +51,7 @@ Zero-shot, `--seed 42`, for spotting regressions after a change. Approximate by 
 
 A full-group run (`--dataset link2`) takes hours; use a single small dataset for smoke tests.
 
-The final evaluation block re-runs each test dataset **5 times**, calling `make_projectors()` afresh each time, and logs `Recall_mean`/`Recall_std` (`Acc_mean`/`F1_std` for node classification). Those are the numbers to compare — see the reproducibility note below.
+The final evaluation block re-runs each test dataset with a fresh `make_projectors()` each time — **5 times at the root, 10 in node classification** — and logs `Recall_mean`/`Recall_std` (`Acc_mean`/`F1_std` for node classification). Those are the numbers to compare — see the reproducibility note below. They are also written to `metrics.json` in the run directory, keyed by dataset name.
 
 ## Commands
 
@@ -55,7 +63,10 @@ uv run python main.py --load pretrain_link1 --epoch 0 --dataset link2
 uv run python main.py --load pretrain_link2 --epoch 0 --dataset ecommerce_in_link1
 
 # Re-train from scratch
-uv run python main.py --dataset link2+link1 --save pretrain_link2 --seed 42
+uv run python main.py --dataset link2+link1 --run_name link2-link1-rerun --seed 42
+
+# Cheap end-to-end smoke test: train on two small graphs, zero-shot the other two
+uv run python main.py --dataset "cora,citeseer+pubmed,products_home" --epoch 1 --seed 42
 
 # Node classification (same modules, separate entry point)
 cd node_classification && uv run python main.py --load pretrain_link2 --epoch 0 --dataset node
@@ -71,7 +82,7 @@ train/test dataset lists, git sha, environment), `final.mod`, `best.mod`,
 `--load` takes a run directory (`runs/X`), a checkpoint inside one (`runs/X/best`),
 or a legacy name (`pretrain_link1` → `Models/pretrain_link1.mod`).
 
-`--dataset`, `--load`, `--save` are argparse *prefix abbreviations* of `--dataset_setting`, `--load_model`, `--save_path`. `--epoch 0` means test-only: the training loop is skipped, `save_history()` early-returns, and only the final repeated-evaluation block runs. `--gpu 0,1` splits the topology encoder (device 0) from the trainable net (device 1); more than 2 raises.
+`--dataset` and `--load` are argparse *prefix abbreviations* of `--dataset_setting` and `--load_model`; `--save` abbreviates the deprecated `--save_path`, which now just aliases `--run_name` and warns. `--epoch 0` means test-only: the training loop is skipped and only the final repeated-evaluation block runs — the run directory, manifest, `metrics.json` and `log.txt` are still written, just no checkpoints. `--gpu 0,1` splits the topology encoder (device 0) from the trainable net (device 1); more than 2 raises.
 
 ## `--dataset_setting` grammar
 
@@ -111,8 +122,7 @@ These projectors are **not learned**. They are recomputed every `handler.reproj_
 - `Expert.trn_count` is a plain attribute, not a buffer, so `state_dict()` drops it. It drives routing load-balancing and is carried in the checkpoint config.
 - **`args` still holds run configuration globally**, but per-dataset shapes (`node_num`, `user_num`, `item_num`) now live on the handler. Don't put dataset-specific state back on `args`.
 - `--tst_mode`/`--trn_mode` must pair as `tst`+`train-all` or `val`+`fewshot`; validated at argparse time.
-- `node_classification/main.py` reads and writes `../Models/` and `../History/` because it runs from its own directory.
-- **Run artifacts are resolved against the repo root, not the cwd** (`run_dir.repo_root()`), so `node_classification/` no longer reaches out through `../Models/`. `Models/` and `History/` still hold only the published baselines.
+- **Run artifacts are resolved against the repo root, not the cwd** (`run_dir.repo_root()`), so `node_classification/` no longer reaches out through `../Models/`. `Models/` and `History/` still hold only the published baselines. The untracked `logs/` directory predates run directories, and nothing writes to it now; `log.txt` in the run directory replaces it.
 - **A missing history is no longer fatal.** `load_model` warns and starts with empty metrics, resuming from epoch 0. That is what makes `best.mod` loadable.
 - **Training writes a second checkpoint.** Whenever test NDCG (Acc for node classification) improves, `run()` saves `best.mod` into the run directory — selected on the **last** test group, i.e. the zero-shot group under `A+B`.
 - **A run refuses to reuse an existing directory** unless `--overwrite` is passed. Generated ids carry a second-resolution timestamp, so this only bites on an explicit `--run_name` — which is the case worth protecting: a `--save pretrain_link1` once overwrote the published 7.57 GB baseline with a 67 MB fragment.

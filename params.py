@@ -11,7 +11,7 @@ def parse_args():
     parser.add_argument('--seed', default=0, type=int, help='random seed for python, numpy and torch')
     parser.add_argument('--run_name', default=None, type=str,
                         help='name of the run directory under runs/; defaults to '
-                             '<UTC timestamp>_<dataset slug>_s<seed>')
+                             '<local timestamp>_<dataset slug>_s<seed>')
     parser.add_argument('--overwrite', action='store_true',
                         help='reuse an existing run directory instead of refusing to')
     parser.add_argument('--save_path', default=None,

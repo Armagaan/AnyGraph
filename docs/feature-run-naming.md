@@ -1,6 +1,7 @@
 # Feature: run directories and provenance
 
-**Status:** design, not implemented.
+**Status:** implemented on `dev` in `9ccb412`, merged as `ecea7f8`.
+The code lives in [run_dir.py](../run_dir.py); this document is the design record.
 **Motivation:** make a training run identifiable after the fact, and make it
 impossible for one run to silently destroy another.
 
@@ -39,8 +40,10 @@ Four consequences:
   like `cora,citeseer+pubmed,products_home` does not fit in one, and two different
   specs can resolve to the same dataset sets. The directory name only has to be
   unique and scannable; `manifest.json` carries the truth.
-- **Run ids are generated, never absent.** `<UTC timestamp>_<spec slug>_s<seed>`,
-  with `--run_name` replacing the whole thing.
+- **Run ids are generated, never absent.** `<local timestamp>_<spec slug>_s<seed>`,
+  with `--run_name` replacing the whole thing. Local rather than UTC so the
+  directory name agrees with `log.txt`, which TimeLogger stamps in local time;
+  the manifest carries `started_utc` for the unambiguous machine-readable form.
 - **`Models/` and `History/` are left alone**, so the published baselines keep
   loading exactly as they do now.
 
@@ -58,7 +61,7 @@ runs/20260909-172200_cora-citeseer+pubmed-products_home_s42/
 
 ### Run id
 
-`<UTC timestamp>_<slug>_s<seed>`, e.g. `20260909-172200_link1+link2_s42`.
+`<local timestamp>_<slug>_s<seed>`, e.g. `20260909-172200_link1+link2_s42`.
 
 The slug is `--dataset_setting` with `,` replaced by `-` and anything outside
 `[A-Za-z0-9_+-]` dropped. Over 40 characters it is truncated and a 6-hex digest of

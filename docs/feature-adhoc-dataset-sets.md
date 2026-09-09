@@ -1,6 +1,8 @@
 # Feature: ad-hoc dataset sets in `--dataset_setting`
 
-**Status:** design, not implemented.
+**Status:** implemented on `dev` in `a0f23eb`, merged as `f8e9a10`.
+The code lives in [dataset_groups.py](../dataset_groups.py); this document is the
+design record.
 **Motivation:** run a pretrain-and-zero-shot-test cycle over an *arbitrary* pair of
 dataset sets, rather than only over the six group names hard-coded in
 `main.py`'s `__main__` block.
