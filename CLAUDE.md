@@ -68,12 +68,15 @@ uv run python scripts/archive_checkpoints.py [--verify]
 
 ## `--dataset_setting` grammar
 
-Group names are defined inline in the `__main__` block of [main.py](main.py), and **again, differently**, in [node_classification/main.py](node_classification/main.py): that copy adds `node` and renames `link1`/`link2` to `div1`/`div2` (same member lists). So `--dataset link2` works at the root and dies in `node_classification/`. Parsed four ways:
+Group names and the resolver both live in [dataset_groups.py](dataset_groups.py). `GROUPS` serves the root entry point; `NODE_GROUPS` is the same dict plus `node`, keeping `div1`/`div2` as aliases for `link1`/`link2`. A **side** of a spec is a group name, or a comma-separated list of dataset and/or group names — flattened and de-duplicated, order-preserving:
 
 - a group name (`link1`, `ecommerce`, `all`, …) → train and test on the same set
-- a single dataset name from `all` → that dataset only
-- `A+B` → train on group A, test on **two** groups: A (full-shot) and B (zero-shot)
-- `A_in_B` → the intersection of groups A and B, used for both train and test
+- a single dataset name → that dataset only
+- `cora,citeseer` → exactly those datasets
+- `A+B` → train on side A, test on **two** groups: A (full-shot) and B (zero-shot)
+- `A_in_B` → the intersection of sides A and B, used for both train and test
+
+So `--dataset "cora,citeseer+pubmed,products_home"` is a full train/zero-shot cycle over four small graphs — the cheap way to exercise MoE routing without the 6–8 minute load a group-sized `A+B` costs. `_in_` is matched before `+`; no name contains either token.
 
 ## Architecture
 
@@ -92,7 +95,7 @@ These projectors are **not learned**. They are recomputed every `handler.reproj_
 
 **Prediction.** Everything is a dot product in the shared space. Link prediction scores anchors against the last `cand_size` embeddings with training edges masked (`pred_for_test`); node classification treats class embeddings as the trailing rows and takes an argmax (`pred_for_node_test`). At test time `rerun_embed=True` only on the first batch; the embedding table is cached on the expert as `self.final_embeds`.
 
-**Task split.** `NodeDataHandler` overrides exactly two methods of `DataHandler` — `fewshot_filename()` and `load_data()` — plus the `data_subdir` (`node_data`) and `step_sample_target` (250 vs 500) class attributes. `get_data_files()`, `set_shapes()` and `finalize_loading()` are *shared*: they are the seams the two `load_data()` bodies were factored around, not overrides. `MultiDataHandler` takes the handler class to build. `node_classification/` holds only `main.py` (its `Utils/` is a stale `__pycache__`), which puts the repo root on `sys.path`.
+**Task split.** `NodeDataHandler` overrides exactly two methods of `DataHandler` — `fewshot_filename()` and `load_data()` — plus the `data_subdir` (`node_data`) and `step_sample_target` (250 vs 500) class attributes. `get_data_files()`, `set_shapes()` and `finalize_loading()` are *shared*: they are the seams the two `load_data()` bodies were factored around, not overrides. `MultiDataHandler` takes the handler class to build. `node_classification/` holds only `main.py` (its `Utils/` is a stale `__pycache__`), which puts the repo root on `sys.path`. Everything it loads comes from `node_data/`, which holds only the five datasets in `NODE_GROUPS['node']` — the inherited link-prediction groups resolve but cannot load.
 
 ## Things that will bite you
 
@@ -105,7 +108,8 @@ These projectors are **not learned**. They are recomputed every `handler.reproj_
 - **All checkpoint/history paths are relative to the cwd** (`./Models/`, `./History/`), so root runs must start from the repo root — there is no path resolution against `__file__`. `--data_dir`/`ANYGRAPH_DATA` is the only path that is cwd-independent.
 - **`--load X` also needs `History/X.his`.** `load_model` opens it unconditionally to restore `self.metrics` and to compute the resume epoch. A checkpoint without its history file raises `FileNotFoundError` — which is exactly the case for the `_best` saves below.
 - **Training silently writes a second checkpoint.** Whenever the test NDCG (Acc for node classification) improves, `run()` saves `<save_path>_best.mod` — selected on the **last** test group, i.e. the zero-shot group under `A+B`. It gets no `.his`, so it cannot be `--load`ed without one being supplied. `--save X` therefore produces both `X.mod` and `X_best.mod`.
-- **`--dataset_setting` defaults to `training`, which is not a group in either `datasets` dict.** All four parse branches fall through and `main.py` dies with a bare `NameError: name 'trn_datasets' is not defined`. Always pass `--dataset`.
+- **`--dataset_setting` still defaults to `training`, which names nothing.** It now exits with a message naming the bad token and listing the valid groups, rather than the old bare `NameError: name 'trn_datasets' is not defined`. Always pass `--dataset`.
+- **An empty `A_in_B` intersection is now an error, not an empty run.** `academic_in_others` and the 25 other non-overlapping pairs used to build a handler over zero datasets and fail obscurely downstream.
 - **`--gpu N` works, but torch's error messages will not agree.** `main.py` sets `CUDA_VISIBLE_DEVICES` from `--gpu` before any CUDA context exists, so `cuda:0` is *always* correct — it is the remapped device, not physical GPU 0. An OOM under `--gpu 2` still says "GPU 0 has a total capacity of...", because torch reports the visible index. Check `nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory` against `--query-gpu=index,uuid` to see where a process really is. (GPUs 0 and 1 on this box are usually held by another user's ollama, ~29 GB each; GPU 2 is the free one.)
 - **`--attempt_cache` is a memory cliff.** `Expert.attempt()` gathers three `attempt_cache x latdim` float tensors at once to score a dataset during routing, so peak cost is ~3x that product. The upstream default of 1e7 asks for ~61 GB at `latdim=512` and cannot fit on any current GPU; it is now 1e6. The OOM retry loop halves the sample and frees the failed gathers first — if you see `attempt: out of memory, retrying with N samples`, lower the default rather than relying on the climb-down.
 - **Class order in [data_handler.py](data_handler.py) is load-bearing.** `NodeDataHandler` must sit after *every* `DataHandler` method, including `make_projectors`. Inserting it mid-class silently rehomes the methods below it onto the subclass, and `DataHandler` loses them — this bit once during the unification, surfacing only as `AttributeError` at runtime.
