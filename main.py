@@ -8,12 +8,14 @@ from model import (Expert, Feat_Projector, Adj_Projector, AnyGraph,
                    restore_trn_counts)
 from data_handler import MultiDataHandler, DataHandler
 from dataset_groups import GROUPS, resolve_dataset_setting
+import run_dir
 import numpy as np
 import pickle
 import random
 import os
 import setproctitle
 import time
+from datetime import datetime, timezone
 
 def set_seed(seed):
     """Seed every RNG the training and evaluation paths draw from.
@@ -96,13 +98,16 @@ class Exp:
                 # 'A+B' setting, otherwise the only group.
                 if group_ndcgs[-1] > best_ndcg:
                     best_ndcg, best_ep = group_ndcgs[-1], ep
-                    self.save_model(args.save_path + '_best')
+                    self.save_model(run_dir.BEST_STEM)
                 self.save_history()
             print()
         if best_ep >= 0:
-            log('Best epoch %d: NDCG = %.4f, saved as %s_best' % (best_ep, best_ndcg, args.save_path))
+            log('Best epoch %d: NDCG = %.4f, saved as %s' % (
+                best_ep, best_ndcg, os.path.join(args.run_path, run_dir.BEST_STEM + '.mod')))
 
+        self.final_metrics = []
         for test_group_id in range(len(self.multi_handler.tst_handlers_group)):
+            per_dataset = dict()
             repeat_times = 5
             overall_recall, overall_ndcg = np.zeros(repeat_times), np.zeros(repeat_times)
             overall_tstnum = 0
@@ -126,6 +131,7 @@ class Exp:
                 overall_recall += np.array(mets['Recall']) * tstnum
                 overall_ndcg += np.array(mets['NDCG']) * tstnum
                 overall_tstnum += tstnum
+                per_dataset[handler.data_name] = tot_reses
                 log(self.make_print(f'Test Top-{args.topk}', args.epoch, tot_reses, False, handler.data_name))
             overall_recall /= overall_tstnum
             overall_ndcg /= overall_tstnum
@@ -135,6 +141,12 @@ class Exp:
             overall_res['NDCG_mean'] = overall_ndcg.mean()
             overall_res['NDCG_std'] = overall_ndcg.std()
             log(self.make_print('Overall Test', args.epoch, overall_res, False))
+            self.final_metrics.append({
+                'group': test_group_id,
+                'datasets': [handler.data_name for handler in tst_handlers],
+                'per_dataset': per_dataset,
+                'overall': overall_res,
+            })
         self.save_history()
 
     def print_model_size(self):
@@ -260,21 +272,37 @@ class Exp:
             allNdcg += ndcg
         return allRecall, allNdcg
     
-    def save_model(self, save_path):
+    def save_model(self, stem):
         content = {
             'version': CHECKPOINT_VERSION,
             'config': describe_model(self.model),
             'state_dict': {k: v.detach().cpu() for k, v in self.model.state_dict().items()},
         }
-        t.save(content, './Models/' + save_path + '.mod')
-        log('Model Saved: %s' % save_path)
+        t.save(content, os.path.join(args.run_path, stem + '.mod'))
+        log('Model Saved: %s' % stem)
 
     def save_history(self):
         if args.epoch == 0:
             return
-        with open('./History/' + args.save_path + '.his', 'wb') as fs:
+        with open(os.path.join(args.run_path, run_dir.HISTORY_NAME), 'wb') as fs:
             pickle.dump(self.metrics, fs)
-        self.save_model(args.save_path)
+        self.save_model(run_dir.FINAL_STEM)
+
+    def finalize(self, status):
+        """Write the run's metrics and close out its manifest.
+
+        Separate from save_history() because a test-only run (--epoch 0) writes
+        no checkpoints but is still the experimental result worth keeping; those
+        runs used to leave nothing behind at all.
+        """
+        run_dir.write_json(os.path.join(args.run_path, run_dir.METRICS_NAME),
+                           getattr(self, 'final_metrics', []))
+        fields = {'status': status,
+                  'finished_utc': datetime.now(timezone.utc).isoformat(timespec='seconds')}
+        if getattr(self, 'model', None) is not None:
+            fields['checkpoint'] = {'version': CHECKPOINT_VERSION,
+                                    'config': describe_model(self.model)}
+        run_dir.update_manifest(args.run_path, **fields)
 
     def rebuild_from_checkpoint(self, ckp):
         """Reconstruct the model from a checkpoint, in either format."""
@@ -291,14 +319,20 @@ class Exp:
         return model
 
     def load_model(self):
+        mod_path, his_path = run_dir.resolve_checkpoint(args.load_model)
         # weights_only=True (the torch>=2.6 default) cannot unpickle the legacy
         # whole-module checkpoints handled below.
-        ckp = t.load('./Models/' + args.load_model + '.mod', map_location='cpu', weights_only=False)
+        ckp = t.load(mod_path, map_location='cpu', weights_only=False)
         self.model = self.rebuild_from_checkpoint(ckp)
         self.opt = t.optim.Adam(self.model.parameters(), lr=args.lr, weight_decay=0)
 
-        with open('./History/' + args.load_model + '.his', 'rb') as fs:
-            self.metrics = pickle.load(fs)
+        # A missing history is not fatal: 'best' checkpoints never had one, so
+        # the better model used to be the one that could not be loaded.
+        if os.path.exists(his_path):
+            with open(his_path, 'rb') as fs:
+                self.metrics = pickle.load(fs)
+        else:
+            log('No history beside %s; starting metrics empty' % os.path.basename(mod_path))
         log('Model Loaded')
 
 if __name__ == '__main__':
@@ -317,9 +351,21 @@ if __name__ == '__main__':
 
 
     trn_datasets, tst_datasets_group = resolve_dataset_setting(args.dataset_setting, GROUPS)
+
+    run_id = run_dir.make_run_id(args, tst_datasets_group)
+    args.run_path = run_dir.create_run_dir(run_id, args.overwrite)
+    logger.set_logfile(os.path.join(args.run_path, run_dir.LOG_NAME))
+    run_dir.start_manifest(args.run_path, run_id, args, trn_datasets, tst_datasets_group)
+    log('Run %s' % args.run_path)
+
     handler = MultiDataHandler(trn_datasets, tst_datasets_group)
     log('Load Data')
 
     exp = Exp(handler)
-    exp.run()
+    try:
+        exp.run()
+    except BaseException:
+        exp.finalize('failed')
+        raise
+    exp.finalize('completed')
     print(args.load_model, args.dataset_setting)

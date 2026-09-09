@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Model Parameters')
@@ -8,7 +9,13 @@ def parse_args():
     parser.add_argument('--tst_batch', default=256, type=int, help='testing batch size (number of users)')
     parser.add_argument('--epoch', default=100, type=int, help='number of epochs')
     parser.add_argument('--seed', default=0, type=int, help='random seed for python, numpy and torch')
-    parser.add_argument('--save_path', default='tem', help='file name to save model and training record')
+    parser.add_argument('--run_name', default=None, type=str,
+                        help='name of the run directory under runs/; defaults to '
+                             '<UTC timestamp>_<dataset slug>_s<seed>')
+    parser.add_argument('--overwrite', action='store_true',
+                        help='reuse an existing run directory instead of refusing to')
+    parser.add_argument('--save_path', default=None,
+                        help='deprecated alias for --run_name')
     parser.add_argument('--load_model', default=None, help='model name to load')
     parser.add_argument('--data_dir', default=os.environ.get('ANYGRAPH_DATA', ''), type=str, help='root directory holding the per-dataset folders (overrides $ANYGRAPH_DATA)')
     parser.add_argument('--tst_epoch', default=1, type=int, help='number of epoch to test while training')
@@ -48,6 +55,13 @@ def parse_args():
                              'peak cost is roughly 3 x attempt_cache x latdim floats, so the old default '
                              'of 1e7 needed ~61GB at latdim=512 and could not fit on any single GPU')
     args = parser.parse_args()
+    if args.save_path is not None:
+        # Kept working so existing scripts do not break, but --save_path named a
+        # file in Models/ and no longer does: a run owns a directory now.
+        print('warning: --save_path is deprecated; use --run_name instead',
+              file=sys.stderr)
+        if args.run_name is None:
+            args.run_name = args.save_path
     # make_projectors() assumes these two are paired. Fail here rather than
     # after loading every dataset.
     if not ((args.tst_mode == 'tst' and args.trn_mode == 'train-all')

@@ -64,6 +64,13 @@ cd node_classification && uv run python main.py --load pretrain_link2 --epoch 0 
 uv run python scripts/archive_checkpoints.py [--verify]
 ```
 
+Every run owns a directory under `runs/`, named `<timestamp>_<dataset slug>_s<seed>`
+unless `--run_name` overrides it. It holds `manifest.json` (full args, the *resolved*
+train/test dataset lists, git sha, environment), `final.mod`, `best.mod`,
+`history.pkl`, `metrics.json` (final numbers keyed by dataset name) and `log.txt`.
+`--load` takes a run directory (`runs/X`), a checkpoint inside one (`runs/X/best`),
+or a legacy name (`pretrain_link1` → `Models/pretrain_link1.mod`).
+
 `--dataset`, `--load`, `--save` are argparse *prefix abbreviations* of `--dataset_setting`, `--load_model`, `--save_path`. `--epoch 0` means test-only: the training loop is skipped, `save_history()` early-returns, and only the final repeated-evaluation block runs. `--gpu 0,1` splits the topology encoder (device 0) from the trainable net (device 1); more than 2 raises.
 
 ## `--dataset_setting` grammar
@@ -105,9 +112,12 @@ These projectors are **not learned**. They are recomputed every `handler.reproj_
 - **`args` still holds run configuration globally**, but per-dataset shapes (`node_num`, `user_num`, `item_num`) now live on the handler. Don't put dataset-specific state back on `args`.
 - `--tst_mode`/`--trn_mode` must pair as `tst`+`train-all` or `val`+`fewshot`; validated at argparse time.
 - `node_classification/main.py` reads and writes `../Models/` and `../History/` because it runs from its own directory.
-- **All checkpoint/history paths are relative to the cwd** (`./Models/`, `./History/`), so root runs must start from the repo root — there is no path resolution against `__file__`. `--data_dir`/`ANYGRAPH_DATA` is the only path that is cwd-independent.
-- **`--load X` also needs `History/X.his`.** `load_model` opens it unconditionally to restore `self.metrics` and to compute the resume epoch. A checkpoint without its history file raises `FileNotFoundError` — which is exactly the case for the `_best` saves below.
-- **Training silently writes a second checkpoint.** Whenever the test NDCG (Acc for node classification) improves, `run()` saves `<save_path>_best.mod` — selected on the **last** test group, i.e. the zero-shot group under `A+B`. It gets no `.his`, so it cannot be `--load`ed without one being supplied. `--save X` therefore produces both `X.mod` and `X_best.mod`.
+- **Run artifacts are resolved against the repo root, not the cwd** (`run_dir.repo_root()`), so `node_classification/` no longer reaches out through `../Models/`. `Models/` and `History/` still hold only the published baselines.
+- **A missing history is no longer fatal.** `load_model` warns and starts with empty metrics, resuming from epoch 0. That is what makes `best.mod` loadable.
+- **Training writes a second checkpoint.** Whenever test NDCG (Acc for node classification) improves, `run()` saves `best.mod` into the run directory — selected on the **last** test group, i.e. the zero-shot group under `A+B`.
+- **A run refuses to reuse an existing directory** unless `--overwrite` is passed. Generated ids carry a second-resolution timestamp, so this only bites on an explicit `--run_name` — which is the case worth protecting: a `--save pretrain_link1` once overwrote the published 7.57 GB baseline with a 67 MB fragment.
+- **`--save_path` is deprecated**; it still works as an alias for `--run_name` and warns on stderr. It no longer names a file in `Models/`.
+- **`--epoch 0` runs still produce a run directory** with a manifest, metrics and log — just no checkpoints. They used to write nothing at all.
 - **`--dataset_setting` still defaults to `training`, which names nothing.** It now exits with a message naming the bad token and listing the valid groups, rather than the old bare `NameError: name 'trn_datasets' is not defined`. Always pass `--dataset`.
 - **An empty `A_in_B` intersection is now an error, not an empty run.** `academic_in_others` and the 25 other non-overlapping pairs used to build a handler over zero datasets and fail obscurely downstream.
 - **`--gpu N` works, but torch's error messages will not agree.** `main.py` sets `CUDA_VISIBLE_DEVICES` from `--gpu` before any CUDA context exists, so `cuda:0` is *always* correct — it is the remapped device, not physical GPU 0. An OOM under `--gpu 2` still says "GPU 0 has a total capacity of...", because torch reports the visible index. Check `nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory` against `--query-gpu=index,uuid` to see where a process really is. (GPUs 0 and 1 on this box are usually held by another user's ollama, ~29 GB each; GPU 2 is the free one.)
