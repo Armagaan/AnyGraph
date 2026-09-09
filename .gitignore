@@ -6,6 +6,9 @@ __pycache__/
 *.py[cod]
 .venv/
 
+# Run artifacts
+runs/
+
 # Large downloaded artifacts (see README.md for the download links)
 Models/*.mod
 *.tar.gz
