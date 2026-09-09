@@ -7,6 +7,7 @@ from model import (Expert, Feat_Projector, Adj_Projector, AnyGraph,
                    CHECKPOINT_VERSION, describe_model, apply_checkpoint_config,
                    restore_trn_counts)
 from data_handler import MultiDataHandler, DataHandler
+from dataset_groups import GROUPS, resolve_dataset_setting
 import numpy as np
 import pickle
 import random
@@ -314,50 +315,9 @@ if __name__ == '__main__':
 
     log('Start')
 
-    
-    datasets = dict()
-    datasets['all'] = [
-        'amazon-book', 'yelp2018', 'gowalla', 'yelp_textfeat', 'amazon_textfeat', 'steam_textfeat', 'Goodreads', 'Fitness', 'Photo', 'ml1m', 'ml10m', 'products_home', 'products_tech', 'cora', 'pubmed', 'citeseer', 'CS', 'arxiv', 'arxiv-ta', 'citation-2019', 'citation-classic', 'collab', 'ddi', 'ppa', 'proteins_spec0', 'proteins_spec1', 'proteins_spec2', 'proteins_spec3', 'email-Enron', 'web-Stanford', 'roadNet-PA', 'p2p-Gnutella06', 'soc-Epinions1'
-    ]
-    datasets['ecommerce'] = [
-        'amazon-book', 'yelp2018', 'gowalla', 'yelp_textfeat', 'amazon_textfeat', 'steam_textfeat', 'Goodreads', 'Fitness', 'Photo', 'ml1m', 'ml10m', 'products_home', 'products_tech'
-    ]
-    datasets['academic'] = [
-        'cora', 'pubmed', 'citeseer', 'CS', 'arxiv', 'arxiv-ta', 'citation-2019', 'citation-classic', 'collab'
-    ]
-    datasets['others'] = [
-        'ddi', 'ppa', 'proteins_spec0', 'proteins_spec1', 'proteins_spec2', 'proteins_spec3', 'email-Enron', 'web-Stanford', 'roadNet-PA', 'p2p-Gnutella06', 'soc-Epinions1'
-    ]
-    datasets['link1'] = [
-        'products_tech', 'yelp2018', 'yelp_textfeat', 'products_home', 'steam_textfeat', 'amazon_textfeat', 'amazon-book', 'citation-2019', 'citation-classic', 'pubmed', 'citeseer', 'ppa', 'p2p-Gnutella06', 'soc-Epinions1', 'email-Enron',
-    ]
-    datasets['link2'] = [
-        'Photo', 'Goodreads', 'Fitness', 'ml1m', 'ml10m', 'gowalla', 'arxiv', 'arxiv-ta', 'cora', 'CS', 'collab', 'proteins_spec0', 'proteins_spec1', 'proteins_spec2', 'proteins_spec3', 'ddi', 'web-Stanford', 'roadNet-PA',
-    ]
 
-    if args.dataset_setting in datasets.keys():
-        trn_datasets = tst_datasets = datasets[args.dataset_setting]
-    elif args.dataset_setting in datasets['all']:
-        trn_datasets = tst_datasets = [args.dataset_setting]
-    elif '+' in args.dataset_setting:
-        idx = args.dataset_setting.index('+')
-        trn_datasets = datasets[args.dataset_setting[:idx]]
-        tst_datasets = datasets[args.dataset_setting[idx+1:]]
-    elif '_in_' in args.dataset_setting:
-        idx = args.dataset_setting.index('_in_')
-        tst_datasets_1 = datasets[args.dataset_setting[:idx]]
-        tst_datasets_2 = datasets[args.dataset_setting[idx+len('_in_'):]]
-        tst_datasets = []
-        for data in tst_datasets_1:
-            if data in tst_datasets_2:
-                tst_datasets.append(data)
-        trn_datasets = tst_datasets
-
-    if '+' not in args.dataset_setting:
-        # No zero-shot prediction test
-        handler = MultiDataHandler(trn_datasets, [tst_datasets])
-    else:
-        handler = MultiDataHandler(trn_datasets, [trn_datasets, tst_datasets])
+    trn_datasets, tst_datasets_group = resolve_dataset_setting(args.dataset_setting, GROUPS)
+    handler = MultiDataHandler(trn_datasets, tst_datasets_group)
     log('Load Data')
 
     exp = Exp(handler)
