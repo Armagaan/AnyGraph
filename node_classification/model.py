@@ -289,6 +289,15 @@ class Expert(nn.Module):
                     raise
                 if cache_size <= 1:
                     raise RuntimeError('attempt(): out of memory even at a single sample')
+                # Release what the failed pass allocated before retrying. These
+                # gathers are cache_size x latdim floats each, and they stay
+                # reachable through this frame (and through the traceback held by
+                # err) until they are cleared, so without this every retry starts
+                # with less free memory than the one before it and the loop can
+                # keep failing all the way down to a single sample.
+                rows = cols = negs = None
+                row_embeds = col_embeds = neg_embeds = None
+                t.cuda.empty_cache()
                 cache_size = cache_size // 2
                 log('attempt: out of memory, retrying with %d samples' % cache_size)
                 pck_perm = t.randperm(all_rows.shape[0], device=args.devices[0])[:cache_size]

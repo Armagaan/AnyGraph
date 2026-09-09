@@ -41,6 +41,9 @@ def parse_args():
     parser.add_argument('--proj_method', default='both', type=str, help='feature projection method')
     parser.add_argument('--nn', default='mlp', type=str, help='what trainable network to use')
     parser.add_argument('--proj_trn_steps', default=100, type=int, help='number of training steps for one initial projection')
-    parser.add_argument('--attempt_cache', default=10000000, type=int, help='number of training steps for one initial projection')
+    parser.add_argument('--attempt_cache', default=1000000, type=int,
+                        help='max edges sampled per expert when scoring a dataset in assign_experts; '
+                             'peak cost is roughly 3 x attempt_cache x latdim floats, so the old default '
+                             'of 1e7 needed ~61GB at latdim=512 and could not fit on any single GPU')
     return parser.parse_args()
 args = parse_args()
